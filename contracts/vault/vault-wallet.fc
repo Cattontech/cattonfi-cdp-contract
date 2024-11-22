@@ -1,0 +1,566 @@
+#pragma version >=0.4.4;
+
+#include "../imports/errors.fc";
+#include "../imports/utils.fc";
+#include "vault-gas.fc";
+#include "op-codes.fc";
+#include "vault-helper.fc";
+
+;; 124 + 1 + 124 + 32 + cell (124 + 124 + 32) + cell (124 + 124 + 124) + cell (267 + 267 + 267 + 267)
+global int data::collateral;
+global int data::in_during_liquidation;
+global int data::reward_debt;
+global int data::pending_reward;
+global int data::unlock_time; 
+
+global int data::balance_ctUSD;
+global int data::convert_time;
+
+global int data::borrow_amount;
+global int data::principal_amount;
+global int data::borrow_index;
+
+global slice data::owner_address;
+global slice data::vault_address;
+
+int cal_attach_gas(int my_balance, int msg_value, int fee) inline {
+    int ton_balance_before_msg = my_balance - msg_value;
+    int storage_fee = VAULT_WALLET_MIN_STORAGE_FEE - min(ton_balance_before_msg, VAULT_WALLET_MIN_STORAGE_FEE);
+    return msg_value - (storage_fee + fee);
+}
+
+int cal_pending_reward(int acc_reward_per_share) inline {
+    return data::pending_reward + data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION - data::reward_debt;
+}
+
+int cal_reward(int acc_reward_per_share) inline {
+    return data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION - data::reward_debt;
+}
+
+int cal_borrow_fee( int borrow_index) inline {
+    if (data::borrow_amount == 0 | (borrow_index <= data::borrow_index)) {
+        return 0;
+    }
+    return (borrow_index - data::borrow_index) * data::borrow_amount / ONE_CTUSD;
+}
+
+int cal_collateral_rate(int price) impure inline_ref {
+    return calculate_collateral_rate(data::collateral, price, data::borrow_amount - data::balance_ctUSD);
+}
+
+() load_data() impure inline_ref {
+    slice ds = get_data().begin_parse();
+
+    data::collateral = ds~load_coins();
+    data::in_during_liquidation = ds~load_bool();
+    data::balance_ctUSD = ds~load_coins();
+    data::convert_time = ds~load_uint32();
+
+    slice ds_reward_info = ds~load_ref().begin_parse();
+    data::reward_debt = ds_reward_info~load_coins();
+    data::pending_reward = ds_reward_info~load_coins();
+    data::unlock_time = ds_reward_info~load_uint32();
+
+    slice ds_borrow_info = ds~load_ref().begin_parse();
+    data::borrow_amount = ds_borrow_info~load_coins();
+    data::principal_amount = ds_borrow_info~load_coins();
+    data::borrow_index = ds_borrow_info~load_coins();
+
+    data::owner_address = ds~load_msg_addr();
+    data::vault_address = ds~load_msg_addr();
+}
+
+() save_data() impure inline_ref {
+    cell reward_info = begin_cell()
+                    .store_coins(data::reward_debt)
+                    .store_coins(data::pending_reward)
+                    .store_uint32(data::unlock_time)
+                    .end_cell();
+
+    cell borrow_info = begin_cell()
+                    .store_coins(data::borrow_amount)
+                    .store_coins(data::principal_amount)
+                    .store_coins(data::borrow_index)                   
+                    .end_cell();
+
+    set_data(begin_cell()
+            .store_coins(data::collateral)
+            .store_bool(data::in_during_liquidation)
+            .store_coins(data::balance_ctUSD)
+            .store_uint32(data::convert_time)
+            .store_ref(reward_info)
+            .store_ref(borrow_info)
+            .store_slice(data::owner_address)
+            .store_slice(data::vault_address)
+            .end_cell());
+}
+
+() on_bounce(slice in_msg_body) impure inline {
+    in_msg_body~skip_bounced_prefix();
+
+    (int op, int query_id) = in_msg_body~load_op_and_query_id();
+    load_data();
+    if(op == op::borrow) {
+        send_msg_excess_with_remainning_value(data::owner_address);
+        save_data();
+        return ();
+    }
+
+    if(op == op::request_liquidation) {
+        data::in_during_liquidation = FALSE;
+        send_msg_excess_with_remainning_value(data::owner_address);
+        save_data();
+        return ();
+    }
+
+    if(op == op::convert){
+        int convert_amount = in_msg_body~load_coins();
+        data::balance_ctUSD += convert_amount;
+        send_msg_excess_with_remainning_value(data::owner_address);
+        save_data();
+        return ();
+    } 
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) { ;; ignore empty messages
+        return ();
+    }
+    slice cs = in_msg_full.begin_parse();
+    int msg_flags = cs~load_msg_flags();
+    if (is_bounced(msg_flags)) {
+        on_bounce(in_msg_body);
+    }
+    slice sender_address = cs~load_msg_addr();
+
+    (int op, int query_id) = in_msg_body~load_op_and_query_id();
+    load_data();
+
+    if (op == op::request_mint_cton){
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+
+        int mint_amount = in_msg_body~load_coins();
+        int cton_price = in_msg_body~load_uint64();
+        slice to_address = in_msg_body~load_msg_addr();
+        int acc_reward_per_share = in_msg_body~load_coins();
+        slice cton_address = in_msg_body~load_msg_addr();
+        int borrow_index = in_msg_body~load_coins();
+        in_msg_body.end_parse();
+        throw_unless(error::insufficient_collateral, data::collateral >= mint_amount);
+
+        if(data::borrow_amount > 0){
+            data::borrow_amount += cal_borrow_fee(borrow_index);
+            int max_withdraw = calculate_amount_can_withdraw(data::collateral, cton_price, data::borrow_amount);
+            throw_unless(error::max_withdraw, max_withdraw >= mint_amount);
+        }
+
+        ;; recheck
+        int collateral_rate = calculate_collateral_rate(data::collateral - mint_amount, cton_price, data::borrow_amount);
+        throw_unless(error::not_enough_collateral, collateral_rate > HEALTHY_COLLATERAL_RATE);
+        
+        int pending = cal_reward(acc_reward_per_share);
+        throw_unless(error::invalid_reward, pending >= 0);
+
+        data::pending_reward += pending;
+        data::collateral -= mint_amount;
+        data::borrow_index = borrow_index;
+        data::reward_debt = data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION;
+
+        int attach_gas = cal_attach_gas(my_balance, msg_value, calc_compute_fee(VAULT_WALLET_UNSTAKE_GAS_CONSUMPTION) + VAULT_WALLET_UNSTAKE_IN_FORWARD_FEE);
+        throw_unless(error::not_enough_gas, attach_gas > fee_min_jetton());
+        send_mint_message(cton_address, to_address, fee_min_jetton(), mint_amount, attach_gas, SEND_MODE_REGULAR);
+        save_data();
+        return ();
+    }
+
+    if (op == op::request_stake){
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+        int stake_amount = in_msg_body~load_coins();
+        slice response_address = in_msg_body~load_msg_addr();
+        int acc_reward_per_share = in_msg_body~load_coins();
+        int time_delay_withdraw = in_msg_body~load_uint32();
+        in_msg_body.end_parse();
+        
+        int pending = cal_reward(acc_reward_per_share);
+        throw_unless(error::invalid_reward, pending >= 0);
+
+        data::pending_reward += pending;
+        data::collateral += stake_amount;
+        data::reward_debt = data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION;
+        data::unlock_time = now() + time_delay_withdraw;
+     
+        builder excess = begin_cell().store_op(op::excesses).store_query_id(query_id);
+        send_raw_message(create_msg(FALSE, response_address, null(), excess, cal_attach_gas(my_balance, msg_value, calc_compute_fee(VAULT_WALLET_STAKE_GAS_CONSUMPTION) + VAULT_WALLET_DEPOSIT_IN_FORWARD_FEE)), SEND_MODE_REGULAR);
+      
+        save_data();
+        return ();
+    }
+
+    if (op == op::request_withdraw){
+        int withdraw_amount = in_msg_body~load_coins();
+        int cton_price = in_msg_body~load_uint64();
+        int acc_reward_per_share = in_msg_body~load_coins();
+        int borrow_index = in_msg_body~load_coins();
+        in_msg_body.end_parse();
+
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+        throw_unless(error::not_enough_collateral, withdraw_amount <= data::collateral);
+        throw_unless(error::in_during_liquidation, data::in_during_liquidation == FALSE);
+        throw_unless(error::withdraw_time, data::unlock_time <= now());
+
+        int pending = cal_reward(acc_reward_per_share);
+
+        if(data::borrow_amount > 0){
+            data::borrow_amount += cal_borrow_fee(borrow_index);
+            int max_withdraw = calculate_amount_can_withdraw(data::collateral, cton_price, data::borrow_amount - data::balance_ctUSD);
+            throw_unless(error::max_withdraw, max_withdraw >= withdraw_amount);
+        }
+
+        int collateral_rate = calculate_collateral_rate(data::collateral - withdraw_amount, cton_price, data::borrow_amount);
+        throw_unless(error::not_enough_collateral, collateral_rate > HEALTHY_COLLATERAL_RATE);
+
+        builder body_noti = begin_cell()
+            .store_op(op::execute_withdraw)
+            .store_query_id(query_id)
+            .store_coins(withdraw_amount)
+            .store_slice(data::owner_address);
+
+        send_raw_message(create_msg(true, data::vault_address, null(), body_noti, 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+
+        data::pending_reward += pending;
+        data::collateral -= withdraw_amount;
+        data::reward_debt = data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION;
+        data::borrow_index = borrow_index;
+        save_data();
+        return ();
+    }
+
+    if(op == op::mint_ctUSD){
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+        throw_unless(error::in_during_liquidation, ~ data::in_during_liquidation);
+        int borrow_amount = in_msg_body~load_coins();
+        int cton_price = in_msg_body~load_uint64();
+        int borrow_index = in_msg_body~load_coins();
+        slice ctUSD_address = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+
+        int borrow_fee = cal_borrow_fee(borrow_index);
+        throw_unless(error::invalid_borrow_fee, borrow_fee >= 0);
+
+        int collateral_rate = calculate_collateral_rate(data::collateral, cton_price, borrow_amount + data::borrow_amount + borrow_fee);
+        throw_unless(error::not_enough_collateral, collateral_rate > HEALTHY_COLLATERAL_RATE);
+
+        int attach_gas =  cal_attach_gas(my_balance, msg_value, calc_compute_fee(VAULT_WALLET_BORROW_GAS_CONSUMPTION) + VAULT_WALLET_BORROW_IN_FORWARD_FEE + VAULT_WALLET_BORROW_NOTIFICATION_OUT_FORWARD_FEE);
+
+        if(attach_gas > fee_min_jetton()){
+            data::borrow_index = borrow_index;
+            data::borrow_amount += borrow_amount + borrow_fee;
+            if(data::balance_ctUSD >= data::borrow_amount) {
+                data::balance_ctUSD = data::balance_ctUSD - data::borrow_amount;
+                data::borrow_amount = 0;
+                data::principal_amount = 0;
+            } else {
+                data::borrow_amount -= data::balance_ctUSD;
+                data::principal_amount += data::balance_ctUSD > borrow_amount ? 0 : borrow_amount - data::balance_ctUSD;
+                data::balance_ctUSD = 0;
+            }
+            send_mint_message(ctUSD_address, data::owner_address, fee_min_jetton(), borrow_amount, attach_gas - VAULT_WALLET_BORROW_NOTIFICATION_OUT_FORWARD_FEE, SEND_MODE_REGULAR);
+            builder request = begin_cell()
+                            .store_op(op::borrow_notification)
+                            .store_query_id(query_id)
+                            .store_coins(borrow_amount)
+                            .store_slice(data::owner_address);
+            send_raw_message(create_msg(FALSE, data::vault_address, null(), request, VAULT_WALLET_BORROW_NOTIFICATION_OUT_FORWARD_FEE) , SEND_MODE_REGULAR);
+        } else {
+            builder excess = begin_cell().store_uint(op::excesses, 32).store_uint(query_id, 64);
+            send_raw_message(create_msg(true, data::owner_address, null(), excess, attach_gas), SEND_MODE_REGULAR);
+        }
+
+        save_data();
+        return ();
+    }
+
+    if(op == op::repay){
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+        int repay_amount = in_msg_body~load_coins();
+        int borrow_index = in_msg_body~load_coins();
+        int time_delay_convert = in_msg_body~load_uint32();
+        in_msg_body.end_parse();
+        throw_unless(error::invalid_amount, repay_amount >= 0);
+        int borrow_fee = cal_borrow_fee(borrow_index);
+        throw_unless(error::invalid_borrow_fee, borrow_fee >= 0);
+        data::borrow_amount += borrow_fee;
+
+        if (repay_amount >= data::borrow_amount){
+            data::balance_ctUSD += repay_amount - data::borrow_amount;
+            data::borrow_amount = 0;
+            data::principal_amount = 0;
+            data::convert_time = now() + time_delay_convert;
+        } else {
+            data::borrow_amount -= repay_amount;
+            data::principal_amount = repay_amount >= data::principal_amount ? 0 : data::principal_amount - repay_amount;
+        }
+        data::borrow_index = borrow_index;
+
+        send_msg_excess_with_remainning_value(data::owner_address);
+        
+        save_data();
+        return ();
+    }
+    
+    if(op == op::request_liquidation){
+        throw_unless(error::invalid_sender, equal_slices(data::owner_address, sender_address));
+        int repay_amount = in_msg_body~load_coins();
+        slice debtor_address = in_msg_body~load_msg_addr();
+        cell oracle_data = in_msg_body~load_ref();
+        in_msg_body.end_parse();
+        check_same_workchain(debtor_address);
+        throw_unless(error::invalid_repay_amount, repay_amount > 0);
+        throw_unless(error::in_during_liquidation, ~ data::in_during_liquidation);
+        throw_unless(error::not_repay, data::borrow_amount == 0);
+
+        data::in_during_liquidation = TRUE;
+
+        builder request = begin_cell()
+                            .store_op(op::request_liquidation)
+                            .store_query_id(query_id)
+                            .store_coins(repay_amount)
+                            .store_coins(data::collateral)
+                            .store_slice(data::owner_address)
+                            .store_slice(debtor_address)
+                            .store_ref(oracle_data);
+
+        send_raw_message(create_msg(TRUE, data::vault_address, null(), request, 0) , SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        save_data();
+        return ();
+    }
+    if (op == op::liquidation){
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+
+        slice liquidator = in_msg_body~load_msg_addr();
+        int repay_amount = in_msg_body~load_coins();
+        int cton_price = in_msg_body~load_uint64();
+        int acc_reward_per_share = in_msg_body~load_coins();
+        int borrow_index = in_msg_body~load_coins();
+        in_msg_body.end_parse();
+        try {
+            if (data::borrow_amount == 0) {
+                throw(777);
+            }
+            int pending = cal_reward(acc_reward_per_share);
+            throw_unless(error::invalid_reward, pending >= 0);
+            data::pending_reward += pending;
+      
+            int borrow_fee = cal_borrow_fee(borrow_index);
+            throw_unless(error::invalid_borrow_fee, borrow_fee >= 0);
+
+            data::borrow_amount += borrow_fee;
+            int collateral_value = calculate_collateral_value(data::collateral, cton_price);
+            int collateral_rate = collateral_value * ONE_HUNDRED_PERCENT / data::borrow_amount;
+
+            if((collateral_rate < HEALTHY_COLLATERAL_RATE) & (repay_amount <= data::borrow_amount) & (repay_amount <= (collateral_value * MAXIMUM_ASSET_VALUE_IN_PARTIAL_LIQUIDATION / ONE_HUNDRED_PERCENT))) {
+                (int amount_for_liquidator, int amount_for_protocol) = calculate_profit_liquidate(repay_amount, cton_price);
+                data::borrow_amount = data::borrow_amount - repay_amount;
+            
+                int total_amount = (amount_for_liquidator + amount_for_protocol);
+                data::collateral -= total_amount;
+                if(data::collateral < 0 ){
+                    data::borrow_amount = 0;
+                    data::collateral = 0;
+                    amount_for_liquidator = 0;
+                    amount_for_protocol = 0;
+                    data::principal_amount = 0;
+                }
+                int principal_amount = repay_amount >= data::principal_amount ? data::principal_amount : repay_amount;
+                builder request = begin_cell()
+                            .store_op(op::liquidate_notification)
+                            .store_query_id(query_id)
+                            .store_uint64(cton_price)
+                            .store_coins(amount_for_liquidator)
+                            .store_coins(amount_for_protocol)
+                            .store_coins(repay_amount)
+                            .store_coins(principal_amount)
+                            .store_slice(liquidator)
+                            .store_slice(data::owner_address);
+                data::principal_amount -= principal_amount;
+
+                send_raw_message(create_msg(TRUE, data::vault_address, null(), request, 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            } else {
+                throw(777);
+            } 
+
+            data::reward_debt = data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION;
+            data::borrow_index = borrow_index;
+            save_data();
+        } catch (_, _) {
+            builder request = begin_cell()
+                            .store_op(op::liquidation_fail)
+                            .store_query_id(query_id)
+                            .store_slice(data::owner_address);
+            slice dst =  calculate_user_vault_wallet_address(liquidator, data::vault_address, my_code());
+
+            send_raw_message(create_msg(FALSE, dst, null(), request, 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        }
+        return ();
+    }
+
+    if (op == op::liquidation_finished) {
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+        int repay_amount = in_msg_body~load_coins();
+        int principal_amount = in_msg_body~load_coins();
+        int profit_for_liquidator = in_msg_body~load_coins();
+        int acc_reward_per_share = in_msg_body~load_coins();
+        int time_delay_withdraw = in_msg_body~load_uint32();
+        int borrow_index = in_msg_body~load_coins();
+        in_msg_body.end_parse();
+ 
+        int pending = cal_reward(acc_reward_per_share);
+        throw_unless(error::invalid_reward, pending >= 0);
+
+        data::pending_reward += pending;
+        data::collateral += profit_for_liquidator;
+        data::reward_debt = data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION;
+        data::unlock_time = now() + time_delay_withdraw;
+
+        if(data::borrow_amount > 0){
+            data::borrow_amount += cal_borrow_fee(borrow_index);
+        }
+        
+        data::borrow_amount += repay_amount;
+        data::borrow_index = borrow_index;
+        data::in_during_liquidation = FALSE;
+        data::principal_amount += principal_amount;
+    
+        send_msg_excess_with_remainning_value(data::owner_address);
+        save_data();
+        return ();
+    }
+
+    if (op == op::liquidation_fail) {
+        slice debtor_address = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+        check_same_workchain(debtor_address);
+        slice dst =  calculate_user_vault_wallet_address(debtor_address, data::vault_address, my_code());
+        throw_unless(error::invalid_sender, equal_slices(dst, sender_address));
+       
+        data::in_during_liquidation = FALSE;
+    
+        send_msg_excess_with_remainning_value(data::owner_address);
+
+        save_data();
+        return ();
+    }
+
+    if (op == op::forced_liquidation){
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+
+        int bad_status = in_msg_body~load_bool();
+        int cton_price = in_msg_body~load_uint64();
+        int acc_reward_per_share = in_msg_body~load_coins();
+        int borrow_index = in_msg_body~load_coins();
+        slice from_address = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+        try {
+            if (data::borrow_amount == 0) {
+                throw(777);
+            }
+            int pending = cal_reward(acc_reward_per_share);
+            throw_unless(error::invalid_reward, pending >= 0);
+            data::pending_reward += pending;
+      
+            int borrow_fee = cal_borrow_fee(borrow_index);
+            throw_unless(error::invalid_borrow_fee, borrow_fee >= 0);
+            data::borrow_amount += borrow_fee;
+            int collateral_value = calculate_collateral_value(data::collateral, cton_price);
+            int collateral_rate = collateral_value * ONE_HUNDRED_PERCENT / data::borrow_amount;
+
+            if((collateral_rate < BAD_COLLATERAL_RATE) | (bad_status & collateral_rate < BAD_COLLATERAL_RATE_WHEN_OVERALL_COLLATERA_RATE_FALLS)) {
+                int repay_amount = data::borrow_amount;
+                (int amount_for_liquidator, int amount_for_protocol) = calculate_profit_liquidate(repay_amount, cton_price);
+                int total_assets_repaid = amount_for_liquidator + amount_for_protocol;
+
+                data::borrow_amount = 0;
+                ;; If the assets are less than the amount to be repaid, the assets will be reduced to zero.
+                total_assets_repaid = data::collateral > total_assets_repaid ? total_assets_repaid : data::collateral;
+                data::collateral = data::collateral - total_assets_repaid;
+
+                builder request = begin_cell()
+                            .store_op(op::forced_liquidation_notification)
+                            .store_query_id(query_id)
+                            .store_uint64(cton_price)
+                            .store_coins(data::principal_amount)
+                            .store_coins(total_assets_repaid)
+                            .store_slice(from_address);
+                data::principal_amount = 0;
+
+                send_raw_message(create_msg(TRUE, data::vault_address, null(), request, 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            } else {
+                throw(777);
+            } 
+
+            data::reward_debt = data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION;
+            data::borrow_index = borrow_index;
+            save_data();
+        } catch (_, _) {
+            send_msg_excess_with_remainning_value(from_address);
+        }
+        return ();
+    }
+
+    if (op == op::request_convert){
+        throw_unless(error::not_owner, equal_slices(data::owner_address, sender_address));
+        int convert_amount = in_msg_body~load_coins();
+        int is_recieve_ton = in_msg_body~load_bool();
+        cell oracle_data = in_msg_body~load_ref();
+        in_msg_body.end_parse();
+
+        throw_unless(error::not_enough_collateral, convert_amount <= (data::balance_ctUSD - data::borrow_amount));
+        builder request = begin_cell()
+                            .store_op(op::convert)
+                            .store_query_id(query_id)
+                            .store_coins(convert_amount)
+                            .store_bool(is_recieve_ton)
+                            .store_slice(data::owner_address)
+                            .store_ref(oracle_data);
+        send_raw_message(create_msg(TRUE, data::vault_address, null(), request, 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        data::balance_ctUSD -= (convert_amount + data::borrow_amount);
+        data::borrow_amount = 0;
+        data::principal_amount = 0;
+        save_data();
+        return ();
+    }
+
+    if (op == op::claim){
+        throw_unless(error::invalid_sender, equal_slices(data::vault_address, sender_address));
+        int player_id = in_msg_body~load_uint64();
+        int acc_reward_per_share = in_msg_body~load_coins();
+        in_msg_body.end_parse();
+
+        int pending = cal_reward(acc_reward_per_share);
+        throw_unless(error::invalid_reward, pending >= 0);
+        
+        builder claim_body = begin_cell().store_op(op::claim_notification).store_query_id(query_id).store_coins(data::pending_reward + pending).store_uint64(player_id).store_slice(data::owner_address);
+        send_raw_message(create_msg(FALSE, data::vault_address, null(), claim_body, 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        data::pending_reward = 0;
+        data::reward_debt = data::collateral * acc_reward_per_share / ACC_REWARD_PRECISION;
+        save_data();
+        return();
+    }
+    throw(error::invalid_op);
+}
+
+(int, int, int, int, int, int, int, int, slice, slice, int, int) get_wallet_data() method_id {
+    load_data();
+    return (data::collateral, data::in_during_liquidation, data::reward_debt, data::unlock_time, data::balance_ctUSD, data::convert_time, data::principal_amount, data::borrow_index, data::owner_address, data::vault_address, data::borrow_amount, data::pending_reward);
+}
+
+(int, int, int, int, int, int) get_flexible_data(int acc_reward_per_share, int borrow_index, int price) method_id {
+    load_data();
+    int pending_reward = cal_pending_reward(acc_reward_per_share);
+    data::borrow_amount += cal_borrow_fee(borrow_index);
+    int collateral_rate = cal_collateral_rate(price);
+    int max_withdraw = calculate_amount_can_withdraw(data::collateral, price, data::borrow_amount);
+    int partial_liquidation_price = calculate_liquidation_price(data::collateral, data::borrow_amount, HEALTHY_COLLATERAL_RATE);
+    int full_liquidation_price = calculate_liquidation_price(data::collateral, data::borrow_amount, BAD_COLLATERAL_RATE);
+    return (pending_reward, data::borrow_amount, collateral_rate, max_withdraw, partial_liquidation_price, full_liquidation_price);
+}

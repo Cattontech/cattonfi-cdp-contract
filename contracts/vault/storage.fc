@@ -1,0 +1,124 @@
+#pragma version >=0.4.4;
+#include "../imports/stdlib.fc";
+
+{- ======== Vault GLOBAL =========== -}
+;; 1 + 124 + 124 + 32 + 274 + 274 = 829 + 767 + 815 + 520 = 3954 + 5 cell
+;; global int vault::is_open?; ;; fasle -> can't deposit or withdraw
+global int vault::total_deposited; ;; total ton deposit + fee
+global int vault::total_fee; ;; Total fees collected from various sources
+global int vault::deposit_fee; ;;  Small fee collected when the user deposits, which is added directly to the total deposit => amount cTon > Ton
+;; global slice vault::controller_address;
+;; global slice vault::admin_address;
+;; 1023
+global cell vault::wallet_code;
+
+;; 124 + 124 + 32 + 32 + 124 + 64 + 267 = 767
+global int cton::total_supply; 
+global int cton::total_staked;
+global int cton::time_delay_withdraw; ;; 1 day
+global int cton::reward_per_second;
+global int cton::acc_reward_per_share;
+global int cton::last_reward_time;
+global slice cton::minter_address;
+
+;; 124 + 124 + 32 + 16 + 32 + + 124 + 64 + 32 + 267 = 815
+global int ctUSD::total_supply;
+global int ctUSD::total_borrow;
+global int ctUSD::time_delay_repay; ;; 1 day
+global int ctUSD::repay_without_debt_fee; ;; 1 %
+global int ctUSD::interest_rate;
+global int ctUSD::borrow_index;
+global int ctUSD::last_accrual_time;
+global int ctUSD::accrual_interval; ;; 1 hour = 3600
+global slice ctUSD::minter_address;
+
+;; 256 + 256 + 8 = 520
+global int oracle::provider_public_key;
+global int oracle::assets_key;
+global int oracle::deviation_threshold;
+
+global int oracle::cton_price;
+
+(int, slice, slice) load_data() impure inline_ref {
+    slice ds = get_data().begin_parse();
+    int is_open? = ds~load_bool();
+    vault::total_deposited = ds~load_coins();
+    vault::total_fee = ds~load_coins();
+    vault::deposit_fee = ds~load_uint32();
+    slice controller_address = ds~load_msg_addr();
+    slice admin_address = ds~load_msg_addr();
+
+    vault::wallet_code = ds~load_ref();
+
+    slice ds_cton_info = ds~load_ref().begin_parse();
+    cton::total_supply = ds_cton_info~load_coins();
+    cton::total_staked = ds_cton_info~load_coins();
+    cton::time_delay_withdraw = ds_cton_info~load_uint32();
+    cton::reward_per_second = ds_cton_info~load_uint32();
+    cton::acc_reward_per_share = ds_cton_info~load_coins();
+    cton::last_reward_time = ds_cton_info~load_uint64();
+    cton::minter_address = ds_cton_info~load_msg_addr();
+
+    slice ds_ctUSD_info = ds~load_ref().begin_parse();
+    ctUSD::total_supply = ds_ctUSD_info~load_coins();
+    ctUSD::total_borrow = ds_ctUSD_info~load_coins();
+    ctUSD::time_delay_repay = ds_ctUSD_info~load_uint32();
+    ctUSD::repay_without_debt_fee = ds_ctUSD_info~load_uint16();
+    ctUSD::interest_rate = ds_ctUSD_info~load_uint32();
+    ctUSD::borrow_index = ds_ctUSD_info~load_coins();
+    ctUSD::last_accrual_time = ds_ctUSD_info~load_uint64();
+    ctUSD::accrual_interval = ds_ctUSD_info~load_uint32();
+    ctUSD::minter_address = ds_ctUSD_info~load_msg_addr();
+
+    slice ds_ton_oracle = ds~load_ref().begin_parse();
+    oracle::provider_public_key = ds_ton_oracle~load_uint256();
+    oracle::assets_key = ds_ton_oracle~load_uint256();
+    oracle::deviation_threshold = ds_ton_oracle~load_uint8();
+
+    ds.end_parse();
+    return (is_open?, controller_address, admin_address);
+}
+
+() save_data(int is_open?, slice controller_address, slice admin_address) impure inline_ref {
+    cell cton_info = begin_cell()
+                    .store_coins(cton::total_supply)
+                    .store_coins(cton::total_staked)
+                    .store_uint32(cton::time_delay_withdraw)
+                    .store_uint32(cton::reward_per_second)
+                    .store_coins(cton::acc_reward_per_share)
+                    .store_uint64(cton::last_reward_time)
+                    .store_slice(cton::minter_address)
+                    .end_cell();
+
+    cell ctUSD_info = begin_cell()
+                    .store_coins(ctUSD::total_supply)
+                    .store_coins(ctUSD::total_borrow)
+                    .store_uint32(ctUSD::time_delay_repay)
+                    .store_uint16(ctUSD::repay_without_debt_fee)
+                    .store_uint32(ctUSD::interest_rate)
+                    .store_coins(ctUSD::borrow_index)
+                    .store_uint64(ctUSD::last_accrual_time)
+                    .store_uint32(ctUSD::accrual_interval)
+                    .store_slice(ctUSD::minter_address)
+                    .end_cell();
+
+    cell ton_oracle = begin_cell()
+                    .store_uint256(oracle::provider_public_key)
+                    .store_uint256(oracle::assets_key)
+                    .store_uint8(oracle::deviation_threshold)
+                    .end_cell();
+
+    cell dt = begin_cell()
+                .store_bool(is_open?)
+                .store_coins(vault::total_deposited)
+                .store_coins(vault::total_fee)
+                .store_uint32(vault::deposit_fee)
+                .store_slice(controller_address)
+                .store_slice(admin_address)
+                .store_ref(vault::wallet_code)
+                .store_ref(cton_info)
+                .store_ref(ctUSD_info)
+                .store_ref(ton_oracle)
+                .end_cell();        
+    set_data(dt);
+}
