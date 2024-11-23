@@ -1,4 +1,4 @@
-# Ton-CDPs
+# Ton-CDPs-contract
 A groundbreaking fusion of Gaming 🎮 and CDPs protocol 💰on Telegram. We make DeFi fun and accessible, tackling challenges in onboarding new users, liquidity sourcing, and infrastructure scaling.
 
 💱 CattonFi: CDPs protocol
