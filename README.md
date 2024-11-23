@@ -5,5 +5,4 @@ A groundbreaking fusion of Gaming 🎮 and CDPs protocol 💰on Telegram. We mak
    - Synthetic Assets : Create utilization for tokens on TON and provide liquidity services.
    - Stable Swap : Attract liquidity from synthetic and LST* assets to increase TVL and transaction volume. 
    - Stablecoin ctUSD: Interest-Bearing stablecoin backed by cTON/LST, and 1:1 USD-hard-pegged stablecoin
-<img width="1087" alt="Screenshot 2024-11-18 at 18 17 29" src="https://github.com/user-attachments/assets/0ac8763a-daed-47c8-baae-fbbff79ba2e2">
-
+<img width="1243" alt="Screenshot 2024-11-23 at 22 47 57" src="https://github.com/user-attachments/assets/2202405d-ecd9-4bb3-a8f1-818fc76b6a36">
