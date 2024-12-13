@@ -1,0 +1,93 @@
+#pragma version >=0.4.4;
+#include "../imports/stdlib.fc";
+
+{- ======== sVault GLOBAL =========== -}
+;; 1 + 124 + 124 + 274 + 274 = 797 + 931 = 1728 + 3 cell
+global int sVault::is_open?;
+global int sVault::total_fee;
+global int sVault::total_withdraw_fee;
+global int sVault::total_convert;
+global slice sVault::controller_address;
+global slice sVault::admin_address;
+global cell sVault::wallet_code;
+
+;; 8 + 124 + 32 + 64 + 32 + 124 + 124 + 64 + 267 = 931
+global int sJetton::decimals;
+global int sJetton::total_deposited;
+global int sJetton::deposit_fee;
+global int sJetton::time_delay_withdraw; ;; 7 day
+global int sJetton::early_withdraw_fee; ;; 1%
+global slice sJetton::wallet_address;
+global int tJetton::total_supply;
+global int tJetton::total_staked;
+global int tJetton::reward_per_second;
+global int tJetton::acc_reward_per_share;
+global int tJetton::last_reward_time;
+global slice tJetton::minter_address;
+
+() load_data() impure inline_ref {
+    slice ds = get_data().begin_parse();
+    sVault::is_open? = ds~load_bool();
+    sVault::total_fee = ds~load_coins();
+    sVault::total_withdraw_fee = ds~load_coins();
+    sVault::total_convert = ds~load_coins();
+    sVault::controller_address = ds~load_msg_addr();
+    sVault::admin_address = ds~load_msg_addr();
+
+    sVault::wallet_code = ds~load_ref();
+
+    slice ds_s_t_jetton_info = ds~load_ref().begin_parse();
+    slice ds_sJetton_info = ds_s_t_jetton_info~load_ref().begin_parse();
+    sJetton::decimals = ds_sJetton_info~load_uint8();
+    sJetton::total_deposited = ds_sJetton_info~load_coins();
+    sJetton::deposit_fee = ds_sJetton_info~load_uint32();
+    sJetton::time_delay_withdraw = ds_sJetton_info~load_uint64();
+    sJetton::early_withdraw_fee = ds_sJetton_info~load_uint32();
+    sJetton::wallet_address = ds_sJetton_info~load_msg_addr();
+    slice ds_tJetton_info = ds_s_t_jetton_info~load_ref().begin_parse();
+    tJetton::total_supply = ds_tJetton_info~load_coins();
+    tJetton::total_staked = ds_tJetton_info~load_coins();
+    tJetton::reward_per_second = ds_tJetton_info~load_coins();
+    tJetton::acc_reward_per_share = ds_tJetton_info~load_coins();
+    tJetton::last_reward_time = ds_tJetton_info~load_uint64();
+    tJetton::minter_address = ds_tJetton_info~load_msg_addr();
+    ds_s_t_jetton_info.end_parse();
+
+    ds.end_parse();
+}
+
+() save_data() impure inline_ref {
+    cell sJetton_info = begin_cell()
+                    .store_uint8(sJetton::decimals)
+                    .store_coins(sJetton::total_deposited)
+                    .store_uint32(sJetton::deposit_fee)
+                    .store_uint64(sJetton::time_delay_withdraw)
+                    .store_uint32(sJetton::early_withdraw_fee)
+                    .store_slice(sJetton::wallet_address)
+                    .end_cell();
+    cell tJetton_info = begin_cell()
+                    .store_coins(tJetton::total_supply)
+                    .store_coins(tJetton::total_staked)
+                    .store_coins(tJetton::reward_per_second)
+                    .store_coins(tJetton::acc_reward_per_share)
+                    .store_uint64(tJetton::last_reward_time)
+                    .store_slice(tJetton::minter_address)
+                    .end_cell();
+    cell s_t_Jetton_info = begin_cell()
+                    .store_ref(sJetton_info)
+                    .store_ref(tJetton_info)
+                    .end_cell();
+
+    cell data = begin_cell()
+                .store_bool(sVault::is_open?)
+                .store_coins(sVault::total_fee)
+                .store_coins(sVault::total_withdraw_fee)
+                .store_coins(sVault::total_convert)
+                .store_slice(sVault::controller_address)
+                .store_slice(sVault::admin_address)
+                .store_ref(sVault::wallet_code)
+                .store_ref(s_t_Jetton_info)
+                .end_cell();    
+                    
+    set_data(data);
+}

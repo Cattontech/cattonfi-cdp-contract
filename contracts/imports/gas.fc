@@ -98,26 +98,12 @@ int get_amount_mint_token(int forward_ton_amount, int fwd_fee) impure inline {
     get_compute_fee(MY_WORKCHAIN, receive_transfer_gas_consumption) +
     calculate_jetton_wallet_min_storage_fee();
 }
-;; const VAULT_BITS  = 3954;
-;; const VAULT_CELLS = 5;
-;; 15528362 
-;; int calculate_vault_min_storage_fee() inline {
-;;     return get_storage_fee(MY_WORKCHAIN, MIN_STORAGE_DURATION, VAULT_BITS, VAULT_CELLS);
-;; }
-
-;; const VAULT_WALLET_BITS  = 2001;
-;; const VAULT_WALLET_CELLS = 3;
-;; real = 8423427
-;; int calculate_vault_wallet_min_storage_fee() inline {
-;;     return get_storage_fee(MY_WORKCHAIN, MIN_STORAGE_DURATION, VAULT_WALLET_BITS, VAULT_WALLET_CELLS);
-;; }
-
-const VAULT_MIN_STORAGE_FEE = 16000000;
-const VAULT_WALLET_MIN_STORAGE_FEE = 8500000;
+const VAULT_JETTON_MIN_STORAGE_FEE = 13625212;
+const VAULT_JETTON_WALLET_MIN_STORAGE_FEE = 7064034;
 
 () check_amount_is_enough_to_burn(int msg_value) impure inline {
     int jetton_wallet_gas_consumption = get_precompiled_gas_consumption();
     int send_burn_gas_consumption = null?(jetton_wallet_gas_consumption) ? SEND_BURN_GAS_CONSUMPTION : jetton_wallet_gas_consumption;
 
-    throw_unless(error::not_enough_gas, msg_value > 2 * get_forward_fee(MY_WORKCHAIN, BURN_NOTIFICATION_BITS, BURN_NOTIFICATION_CELLS) + get_compute_fee(MY_WORKCHAIN, send_burn_gas_consumption) + get_compute_fee(MY_WORKCHAIN, RECEIVE_BURN_GAS_CONSUMPTION) + VAULT_WALLET_MIN_STORAGE_FEE);
+    throw_unless(error::not_enough_gas, msg_value > 2 * get_forward_fee(MY_WORKCHAIN, BURN_NOTIFICATION_BITS, BURN_NOTIFICATION_CELLS) + get_compute_fee(MY_WORKCHAIN, send_burn_gas_consumption) + get_compute_fee(MY_WORKCHAIN, RECEIVE_BURN_GAS_CONSUMPTION) + VAULT_JETTON_MIN_STORAGE_FEE);
 }

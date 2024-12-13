@@ -1,0 +1,354 @@
+#pragma version >=0.4.4;
+#include "../imports/stdlib.fc";
+#include "gas.fc";
+#include "../imports/errors.fc";
+#include "sVault-storage.fc";
+#include "sVault-helper.fc";
+
+int one_sJetton() inline {
+    return math::pow(10, sJetton::decimals);
+}
+
+int calculate_stJetton_ratio() inline {
+    if(sJetton::total_deposited == 0) {
+        return one_sJetton();
+    }
+    int total_tJetton = tJetton::total_supply + tJetton::total_staked;
+    if (total_tJetton == 0) {
+        return one_sJetton();
+    }
+    return sJetton::total_deposited * one_sJetton() / total_tJetton;
+}
+
+() send_message_to_wallet(slice owner_address, builder body, int need_state_init, int coins, int mode) impure inline_ref {
+    builder state_init =  calculate_sVault_wallet_state_init(owner_address, my_address(), sVault::wallet_code);
+    slice dst = calculate_address(state_init.end_cell());
+    send_raw_message(create_msg(TRUE, dst, need_state_init ? state_init : null(), body, coins), mode);
+}
+
+() is_from_sVault_wallet_address(slice from_address, slice sender_address) impure inline_ref {
+    check_same_workchain(from_address);
+    slice dst =  calculate_user_sVault_wallet_address(from_address, my_address(), sVault::wallet_code);
+    throw_unless(error::invalid_sender, equal_slices(dst, sender_address));
+}
+
+() is_lock() impure inline_ref {
+    throw_unless(error::not_open, sVault::is_open?);
+}
+
+() on_bounce(slice in_msg_body) impure inline {
+    in_msg_body~skip_bounced_prefix();
+    (int op, int query_id) = in_msg_body~load_op_and_query_id();
+    load_data();
+    if(op == op::request_mint_tJetton) {
+        int unstake_amount = in_msg_body~load_coins();
+        tJetton::total_staked += unstake_amount;
+        tJetton::total_supply -= unstake_amount;
+        save_data();
+    } 
+}
+
+() update_reward_debt(int current_time) impure inline {
+    (tJetton::acc_reward_per_share, tJetton::last_reward_time) = cal_reward_debt(current_time, tJetton::reward_per_second, tJetton::acc_reward_per_share, tJetton::last_reward_time, tJetton::total_staked);
+}
+
+() admin_functions(int msg_value, slice in_msg_body) impure inline {
+    (int op, int query_id) = in_msg_body~load_op_and_query_id();
+
+    ;; Call the contract (where this address is the administrator)
+    if (op == op::call_to_without_ref) {
+        slice toAddr = in_msg_body~load_msg_addr();
+        slice payload = in_msg_body~load_ref().begin_parse();
+        builder request =  begin_cell().store_op(payload~load_uint32()).store_query_id(payload~load_uint64());
+        send_raw_message(create_msg(true, toAddr, null(), request , 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        return ();
+    }
+
+    ;; Call the contract (where this address is the administrator)
+    if (op == op::call_to) {
+        slice toAddr = in_msg_body~load_msg_addr();
+        slice payload = in_msg_body~load_ref().begin_parse();
+        builder request =  begin_cell().store_op(payload~load_uint32()).store_query_id(payload~load_uint64()).store_ref(payload~load_ref());
+        payload.end_parse();
+        send_raw_message(create_msg(true, toAddr, null(), request , 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        return ();
+    }
+    
+    if (op == op::upgrade_code){
+        cell new_code = in_msg_body~load_ref();
+        cell new_data = in_msg_body~load_ref();
+        set_code(new_code);
+        set_data(new_data);
+        return();
+    }
+
+    if (op == op::update_sJetton_config){
+        sJetton::decimals = in_msg_body~load_uint8();
+        sJetton::deposit_fee = in_msg_body~load_uint32();
+        sJetton::time_delay_withdraw = in_msg_body~load_uint64();
+        sJetton::early_withdraw_fee = in_msg_body~load_uint32();
+        sJetton::wallet_address = in_msg_body~load_msg_addr();
+        tJetton::reward_per_second = in_msg_body~load_coins();
+        tJetton::minter_address = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+        save_data();
+        return();
+    }
+
+    if (op == op::open){
+        sVault::is_open? ? (sVault::is_open? = FALSE) : (sVault::is_open? = TRUE);
+        save_data();
+        return ();
+    }
+
+    throw(error::invalid_op);
+}
+
+() deposit_sJetton(int msg_value, int sJetton_amount, slice to_address) impure inline {
+    int sJetton_amount_fee = sJetton_amount * sJetton::deposit_fee / ONE_HUNDRED_PERCENT;
+    sJetton_amount = sJetton_amount - sJetton_amount_fee;
+    int tJetton_amount = cal_mint_tJetton_amount(sJetton_amount, sJetton::total_deposited, tJetton::total_staked + tJetton::total_supply);
+    ;; need check transaction fee
+    builder body_request = begin_cell()
+                .store_op(op::request_stake)
+                .store_query_id(0)
+                .store_coins(tJetton_amount)
+                .store_slice(to_address)
+                .store_coins(tJetton::acc_reward_per_share)
+                .store_uint32(sJetton::time_delay_withdraw);
+    
+    sJetton::total_deposited += sJetton_amount;
+    tJetton::total_staked += tJetton_amount;
+    if(sJetton_amount_fee > 0) {
+        sVault::total_fee += sJetton_amount;
+    }
+
+    send_message_to_wallet(to_address, body_request, TRUE, 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+
+    save_data();
+}
+
+() jetton_transfer_notification(int msg_value, slice in_msg_body, slice sender_address) impure inline {
+    int transfer_amount = in_msg_body~load_coins();
+    slice from_address = in_msg_body~load_msg_addr();
+    try {
+        check_same_workchain(from_address);
+        slice payload = in_msg_body~load_maybe_ref().begin_parse();
+        in_msg_body.end_parse();
+        int internal_op = payload~load_op();
+
+        if(equal_slices(sJetton::wallet_address, sender_address)){
+            payload.end_parse();
+            throw_unless(error::insufficient_fee, msg_value >= deposit_sJetton_fee());
+            if (internal_op == op::deposit) {
+                deposit_sJetton(msg_value, transfer_amount, from_address);
+                return ();
+            } elseif (internal_op == op::profit) {
+                sJetton::total_deposited += transfer_amount;
+                save_data();
+                return ();
+            } elseif(internal_op == op::reimburse) {
+                ;; The assets obtained by the controller after full liquidation will be returned when the user converts c to sJtton or tJetton.
+                int collateral_amount = cal_mint_tJetton_amount(transfer_amount, sJetton::total_deposited, tJetton::total_supply + tJetton::total_staked);
+                sJetton::total_deposited += transfer_amount;
+                tJetton::total_staked += collateral_amount;
+                save_data();
+                return ();
+            }
+        }
+    } catch (_,_) {
+        if(equal_slices(sJetton::wallet_address, sender_address)){
+            sJetton::total_deposited += transfer_amount;
+            save_data();
+        }
+        send_msg_excess_with_remainning_value(from_address);
+        return ();
+    }
+}
+
+() mutative_functions(int my_balance, int msg_value, slice in_msg_body, slice sender_address) impure inline {
+    (int op, int query_id) = in_msg_body~load_op_and_query_id();
+
+    is_lock();
+    update_reward_debt(now());
+
+    if (op == op::transfer_notification){
+        jetton_transfer_notification(msg_value, in_msg_body, sender_address);
+        return();
+    } elseif (op == op::execute_withdraw){
+        int withdraw_tJetton_amount = in_msg_body~load_coins();
+        slice to_address = in_msg_body~load_msg_addr();
+        int early_withdraw = in_msg_body~load_bool();
+        in_msg_body.end_parse();
+        is_from_sVault_wallet_address(to_address, sender_address);
+
+        int transfer_sJetton_amount = cal_withdraw_sJetton_amount(withdraw_tJetton_amount, sJetton::total_deposited, tJetton::total_supply + tJetton::total_staked);
+        int fee = early_withdraw ? transfer_sJetton_amount * sJetton::early_withdraw_fee  / ONE_HUNDRED_PERCENT : 0;
+
+        throw_unless(error::not_enough_collateral, tJetton::total_staked >= transfer_sJetton_amount);
+
+        tJetton::total_staked -= withdraw_tJetton_amount;
+        sJetton::total_deposited -= transfer_sJetton_amount;
+        sVault::total_fee += fee;
+
+        send_transfer_message(sJetton::wallet_address, to_address, to_address, (transfer_sJetton_amount - fee), 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        save_data();
+        return();
+    } elseif (op == op::unstake){
+        throw_unless(error::insufficient_fee, msg_value >= unstake_tJetton_fee());
+        int unstake_amount = in_msg_body~load_coins();
+        in_msg_body.end_parse();
+
+        throw_unless(error::invalid_amount, unstake_amount > 0);
+        
+        builder body_request = begin_cell()
+                .store_op(op::request_mint_tJetton)
+                .store_query_id(0)
+                .store_coins(unstake_amount)
+                .store_coins(tJetton::acc_reward_per_share)
+                .store_slice(tJetton::minter_address);
+
+        send_message_to_wallet(sender_address, body_request, FALSE, 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+        tJetton::total_supply += unstake_amount;
+        tJetton::total_staked -= unstake_amount;
+        save_data();
+        return();
+    } elseif (op == op::request_withdraw) {
+        throw_unless(error::insufficient_fee, msg_value >= withdraw_sJetton_fee());
+        int withdraw_amount = in_msg_body~load_coins();
+        throw_unless(error::invalid_amount, withdraw_amount > 0);
+
+        throw_unless(error::insufficient_balance, sJetton::total_deposited >= cal_withdraw_sJetton_amount(withdraw_amount, sJetton::total_deposited, tJetton::total_supply + tJetton::total_staked));
+        
+        builder body_request = begin_cell()
+                            .store_op(op::request_withdraw)
+                            .store_query_id(0)
+                            .store_coins(withdraw_amount)
+                            .store_coins(tJetton::acc_reward_per_share);
+        send_message_to_wallet(sender_address, body_request, FALSE, 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        save_data();
+        return();
+    } elseif (op == op::burn_notification){
+        ;; handle message upon receiving burn token notification tJetton
+        int burn_amount = in_msg_body~load_coins();
+        slice response_address = in_msg_body~load_msg_addr();
+        try {
+            slice payload = in_msg_body~load_maybe_ref().begin_parse();
+            in_msg_body.end_parse();
+            int internal_op = payload~load_op();
+            payload.end_parse();
+            check_same_workchain(response_address);
+            if(equal_slices(tJetton::minter_address, sender_address)){
+                throw_unless(error::insufficient_fee, msg_value >= deposit_tJetton_fee());
+                builder body_request = begin_cell()
+                                        .store_op(op::request_stake)
+                                        .store_query_id(0)
+                                        .store_coins(burn_amount)
+                                        .store_slice(response_address)
+                                        .store_coins(tJetton::acc_reward_per_share)
+                                        .store_uint32(sJetton::time_delay_withdraw); 
+                tJetton::total_staked += burn_amount;
+                tJetton::total_supply -= burn_amount;
+                send_message_to_wallet(response_address, body_request, TRUE, 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+                save_data();
+            }
+        } catch(_,_) {
+            if(equal_slices(tJetton::minter_address, sender_address)){
+                tJetton::total_supply -= burn_amount;
+            }
+            send_msg_excess_with_remainning_value(response_address);
+            save_data();
+        }
+        return();
+    } elseif (op == op::claim){
+        int player_id = in_msg_body~load_uint64();
+        in_msg_body.end_parse();
+        builder request = begin_cell()
+                                .store_op(op::claim)
+                                .store_query_id(query_id)
+                                .store_uint64(player_id)
+                                .store_coins(tJetton::acc_reward_per_share);
+
+        send_message_to_wallet(sender_address, request, FALSE, 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        save_data();
+        return();
+    } elseif (op == op::claim_notification){
+        ;; notification after claim reward
+        int reward = in_msg_body~load_coins();
+        in_msg_body~load_uint64();
+        slice to_address = in_msg_body~load_msg_addr();
+
+        is_from_sVault_wallet_address(to_address, sender_address);
+
+        builder excess = begin_cell().store_op(op::excesses).store_query_id(query_id);
+        send_raw_message(create_msg(FALSE, to_address, null(), excess, 0), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        save_data();
+        return();
+    }
+
+    throw(error::invalid_op);
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) { ;; ignore empty messages
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int msg_flags = cs~load_msg_flags();
+    if (is_bounced(msg_flags)) {
+        on_bounce(in_msg_body);
+        return ();
+    }
+   
+    slice sender_address = cs~load_msg_addr();
+    load_data();
+
+    if (equal_slices(sVault::admin_address, sender_address)) {
+        admin_functions(msg_value, in_msg_body);
+    } else {
+        mutative_functions(my_balance, msg_value, in_msg_body, sender_address);
+    }
+    return ();
+}
+
+(int, int, int, int, slice, slice, cell, int, int, int, int, int, slice, int, int, int, int, int, slice) get_vault_data() method_id {
+    load_data();
+    return (
+        sVault::is_open?, 
+        sVault::total_fee, 
+        sVault::total_withdraw_fee, 
+        sVault::total_convert, 
+        sVault::controller_address, 
+        sVault::admin_address, 
+        sVault::wallet_code,
+        
+        sJetton::decimals,
+        sJetton::total_deposited,
+        sJetton::deposit_fee, 
+        sJetton::time_delay_withdraw, 
+        sJetton::early_withdraw_fee, 
+        sJetton::wallet_address, 
+        tJetton::total_supply,
+        tJetton::total_staked,
+        tJetton::reward_per_second,
+        tJetton::acc_reward_per_share,
+        tJetton::last_reward_time,
+        tJetton::minter_address
+    );
+}
+
+(int) get_flexible_data() method_id {
+    load_data();
+    update_reward_debt(now());
+    return (tJetton::acc_reward_per_share);
+}
+
+slice get_wallet_address(slice owner_address) method_id {
+    load_data();
+    return calculate_user_sVault_wallet_address(owner_address, my_address(), sVault::wallet_code);
+}
+
+(int, int, int, int) get_est_fee() method_id {
+    return (deposit_sJetton_fee(), unstake_tJetton_fee(), deposit_tJetton_fee(), withdraw_sJetton_fee());
+}

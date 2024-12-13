@@ -1,8 +1,20 @@
-# CattonFi-CDPs-contract
-A groundbreaking fusion of Gaming 🎮 and CDPs protocol 💰on Telegram. We make DeFi fun and accessible, tackling challenges in onboarding new users, liquidity sourcing, and infrastructure scaling.
+# Vault Token Management
 
-💱 CattonFi: CDPs protocol
-   - Synthetic Assets : Create utilization for tokens on TON and provide liquidity services.
-   - Stable Swap : Attract liquidity from synthetic and LST* assets to increase TVL and transaction volume. 
-   - Stablecoin ctUSD: Interest-Bearing stablecoin backed by cTON/LST, and 1:1 USD-hard-pegged stablecoin
-<img width="1243" alt="Screenshot 2024-11-23 at 22 47 57" src="https://github.com/user-attachments/assets/2202405d-ecd9-4bb3-a8f1-818fc76b6a36">
+This project enables seamless management of sJetton and tJetton tokens through a vault system. Below are the core features available for users.
+
+## Features for Users
+
+### 1. Deposit sJetton Tokens
+- Users can deposit their sJetton tokens.
+- Upon deposit, the tokens are converted into tJetton tokens and stored in the vault.
+
+### 2. Withdraw Tokens
+- Users can withdraw sJetton or tJetton tokens:
+  - **sJetton Withdrawal**: Users must either wait for a processing period or pay a fee.
+  - **tJetton Withdrawal**: Direct withdrawal of tJetton is supported.
+
+### 3. Deposit tJetton Tokens
+- Users can deposit tJetton tokens directly into the vault.
+
+### 4. Claim Rewards
+- Users can request and claim their rewards from the vault.

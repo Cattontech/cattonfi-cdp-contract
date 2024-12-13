@@ -4,7 +4,6 @@
 #include "op-codes.fc";
 #include "jetton-utils.fc";
 #include "../imports/stdlib.fc";
-#include "../imports/utils.fc";
 #include "../imports/gas.fc";
 
 (int, int, slice, slice) load_data() inline {

@@ -1,0 +1,43 @@
+#pragma version >=0.4.4;
+#include "../imports/stdlib.fc";
+;; 1 + 267 + 267  + cell (124 + 124) = 784
+global int data::status;
+
+global int tJetton::balance; ;; total staked.
+global int tJetton::reward_debt;
+global int tJetton::pending_reward;
+global int tJetton::unlock_time; ;; withdrawal time
+
+global slice data::owner_address;
+global slice data::sVault_address;
+
+() load_data() impure inline {
+    slice ds = get_data().begin_parse();
+    data::status = ds~load_bool();
+    data::owner_address = ds~load_msg_addr();
+    data::sVault_address = ds~load_msg_addr();
+
+    slice ds_tJetton_info = ds~load_ref().begin_parse();
+    tJetton::balance = ds_tJetton_info~load_coins();
+    tJetton::reward_debt = ds_tJetton_info~load_coins();
+    tJetton::pending_reward = ds_tJetton_info~load_coins();
+    tJetton::unlock_time = ds_tJetton_info~load_uint32();
+    
+    ds.end_parse();
+}
+
+() save_data() impure inline {
+    cell tJetton_info = begin_cell()
+                    .store_coins(tJetton::balance)
+                    .store_coins(tJetton::reward_debt)
+                    .store_coins(tJetton::pending_reward)
+                    .store_uint32(tJetton::unlock_time)
+                    .end_cell();
+
+    set_data(begin_cell()
+            .store_bool(data::status)
+            .store_slice(data::owner_address)
+            .store_slice(data::sVault_address)
+            .store_ref(tJetton_info)
+            .end_cell());
+}

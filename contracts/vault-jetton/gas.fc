@@ -1,0 +1,125 @@
+#pragma version >=0.4.4;
+#include "../imports/gas.fc";
+#include "constants.fc";
+
+;; Returns compute fee so far (including this instruction and gas_will_be_use).
+int calc_compute_fee(int gas_will_be_use) impure inline {
+    int gas_used = gas_will_be_use
+    + 18 ;; gas_used += get_gas_used() => ADD(18 gas)
+    + 44; ;; get_compute_fee(gas_used, false); => FALSE(18 gas) + GETGASFEE(26 gas) = 44
+    int compute_fee = get_compute_fee(MY_WORKCHAIN, gas_used);
+    return compute_fee;
+}
+
+int fee_min_jetton() inline {
+    return get_amount_mint_token(0, FORWARD_AMOUNT_FEE);
+}
+
+;; const VAULT_JETTON_BITS  = 3163;
+;; const VAULT_JETTON_CELLS = 5;
+;; int calculate_vault_jetton_min_storage_fee() inline {
+;;     return get_storage_fee(MY_WORKCHAIN, MIN_STORAGE_DURATION, VAULT_JETTON_BITS, VAULT_JETTON_CELLS);
+;; }
+
+;; const VAULT_JETTON_WALLET_BITS  = 1436;
+;; const VAULT_FETTON_WALLET_CELLS = 3;
+;; int calculate_vault_jetton_wallet_min_storage_fee() inline {
+;;     return get_storage_fee(MY_WORKCHAIN, MIN_STORAGE_DURATION, VAULT_JETTON_WALLET_BITS, VAULT_FETTON_WALLET_CELLS);
+;; }
+
+int cal_keep_balance(int my_balance) inline {
+    return my_balance >= VAULT_JETTON_MIN_STORAGE_FEE ? 0 : (VAULT_JETTON_MIN_STORAGE_FEE - my_balance);
+}
+
+;; DEPOSIT TO STAKE
+int deposit_sJetton_gas_fee() inline {
+    return calc_compute_fee(VAULT_DEPOSIT_sJETTON_GAS_CONSUMPTION);
+}
+int deposit_sJetton_forward_fee() inline {
+    return get_forward_fee(MY_WORKCHAIN, VAULT_DEPOSIT_sJETTON_FORWARD_BIT, VAULT_DEPOSIT_sJETTON_FORWARD_CELL);
+}
+
+int wallet_deposit_sJetton_gas_fee(int forward_fee) inline {
+    return VAULT_JETTON_WALLET_MIN_STORAGE_FEE + calc_compute_fee(VAULT_WALLET_DEPOSIT_sJETTON_GAS_CONSUMPTION) + forward_fee / 3 + COMMON_FORWARD_FEE;
+}
+
+int deposit_sJetton_fee() inline {
+    int forward_fee = deposit_sJetton_forward_fee();
+    return VAULT_DEPOSIT_sJETTON_IN_FORWARD + deposit_sJetton_gas_fee() + forward_fee + wallet_deposit_sJetton_gas_fee(forward_fee);
+}
+
+int unstake_tJetton_gas_fee() inline {
+    return calc_compute_fee(VAULT_UNSTAKE_tJETTON_GAS_CONSUMPTION);
+}
+
+int unstake_tJetton_forward_fee() inline {
+    return get_forward_fee(MY_WORKCHAIN, VAULT_UNSTAKE_tJETTON_FORWARD_BIT, VAULT_UNSTAKE_tJETTON_FORWARD_CELL);
+}
+
+int wallet_unstake_sJetton_forward_fee() inline {
+    return get_forward_fee(MY_WORKCHAIN, VAULT_WALLET_UNSTAKE_tJETTON_FORWARD_BIT, VAULT_WALLET_UNSTAKE_tJETTON_FORWARD_CELL);
+}
+
+int wallet_unstake_sJetton_gas_fee(int in_forward_fee, int forward_fee) inline {
+    return VAULT_JETTON_WALLET_MIN_STORAGE_FEE + calc_compute_fee(VAULT_WALLET_UNSTAKE_tJETTON_GAS_CONSUMPTION) + in_forward_fee / 3 + forward_fee + fee_min_jetton();
+}
+
+int unstake_tJetton_fee() inline {
+    int forward_fee = unstake_tJetton_forward_fee();
+    int wallet_forward_fee = wallet_unstake_sJetton_forward_fee();
+    return VAULT_UNSTAKE_tJETTON_IN_FORWARD + unstake_tJetton_gas_fee() + forward_fee + wallet_unstake_sJetton_gas_fee(forward_fee, wallet_forward_fee);
+}
+
+int deposit_tJetton_gas_fee() inline {
+    return calc_compute_fee(VAULT_DEPOSIT_tJETTON_GAS_CONSUMPTION);
+}
+
+int deposit_tJetton_forward_fee() inline {
+    return get_forward_fee(MY_WORKCHAIN, VAULT_DEPOSIT_tJETTON_FORWARD_BIT, VAULT_DEPOSIT_tJETTON_FORWARD_CELL);
+}
+
+int wallet_deposit_tJetton_forward_fee() inline {
+    ;; return get_forward_fee(MY_WORKCHAIN, VAULT_WALLET_DEPOSIT_tJETTON_FORWARD_BIT, VAULT_WALLET_DEPOSIT_tJETTON_FORWARD_CELL);
+    return COMMON_FORWARD_FEE;
+}
+
+int wallet_deposit_tJetton_gas_fee(int in_forward_fee, int forward_fee) inline {
+    return VAULT_JETTON_WALLET_MIN_STORAGE_FEE + calc_compute_fee(VAULT_WALLET_DEPOSIT_tJETTON_GAS_CONSUMPTION) + in_forward_fee / 3 + forward_fee;
+}
+
+int deposit_tJetton_fee() inline {
+    int forward_fee = deposit_tJetton_forward_fee();
+    int wallet_forward_fee = wallet_deposit_tJetton_forward_fee();
+    return VAULT_DEPOSIT_tJETTON_IN_FORWARD + deposit_tJetton_gas_fee() + forward_fee + wallet_deposit_tJetton_gas_fee(forward_fee, wallet_forward_fee);
+}
+
+int withdraw_sJetton_gas_fee() inline {
+    return calc_compute_fee(VAULT_WITHDRAW_sJETTON_GAS_CONSUMPTION);
+}
+
+int withdraw_sJetton_forward_fee() inline {
+    ;; return get_forward_fee(MY_WORKCHAIN, VAULT_WITHDRAW_sJETTON_FORWARD_BIT, VAULT_WITHDRAW_sJETTON_FORWARD_CELL);
+    return COMMON_FORWARD_FEE;
+}
+
+int wallet_withdraw_sJetton_forward_fee() inline {
+    return get_forward_fee(MY_WORKCHAIN, VAULT_WALLET_WITHDRAW_sJETTON_FORWARD_BIT, VAULT_WALLET_WITHDRAW_sJETTON_FORWARD_CELL);
+}
+
+int wallet_withdraw_sJetton_gas_fee(int in_forward_fee, int forward_fee) inline {
+    return VAULT_JETTON_WALLET_MIN_STORAGE_FEE + calc_compute_fee(VAULT_WALLET_WITHDRAW_sJETTON_GAS_CONSUMPTION) + forward_fee + in_forward_fee / 3;
+}
+
+int execute_withdraw_sJetton_gas_fee() inline {
+    return calc_compute_fee(VAULT_EXECUTE_WITHDRAW_sJETTON_GAS_CONSUMPTION);
+}
+
+int execute_withdraw_sJetton_notification_forward_fee() inline {
+    return get_forward_fee(MY_WORKCHAIN, VAULT_EXECUTE_WITHDRAW_sJETTON_FORWARD_BIT, VAULT_EXECUTE_WITHDRAW_sJETTON_FORWARD_CELL);
+}
+
+int withdraw_sJetton_fee() inline {
+    int forward_fee = withdraw_sJetton_forward_fee();
+    int wallet_forward_fee = wallet_withdraw_sJetton_forward_fee();
+    return VAULT_WITHDRAW_sJETTON_IN_FORWARD + withdraw_sJetton_gas_fee() + forward_fee + wallet_withdraw_sJetton_gas_fee(forward_fee, wallet_forward_fee) + wallet_forward_fee / 3 + execute_withdraw_sJetton_gas_fee() + execute_withdraw_sJetton_notification_forward_fee() + TRANSFER_JETTON_FEE;
+}

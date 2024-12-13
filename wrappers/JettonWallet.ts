@@ -56,17 +56,18 @@ export class JettonWallet implements Contract {
         value: bigint,
         forwardValue: bigint,
         recipient: Address,
+        responseAddress: Address | null,
         amount: bigint,
         forwardPayload: Cell,
-    ) {
-        await provider.internal(via, {
+    ): Promise<any> {
+        return await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             body: beginCell()
                 .storeUint(0x0f8a7ea5, 32)
                 .storeUint(0, 64)
                 .storeCoins(amount)
                 .storeAddress(recipient)
-                .storeAddress(via.address)
+                .storeAddress(responseAddress)
                 .storeUint(0, 1)
                 .storeCoins(forwardValue)
                 .storeUint(1, 1)
@@ -75,7 +76,7 @@ export class JettonWallet implements Contract {
             value: value + forwardValue,
         });
     }
-    static burnMessage(jetton_amount: bigint, responseAddress: Address, customPayload: Cell | null): Cell {
+    static burnMessage(jetton_amount: bigint, responseAddress: Address | null, customPayload: Cell | null): Cell {
         let c: Builder = beginCell()
             .storeUint(Op.burnJetton, 32)
             .storeUint(0, 64) // op, queryId
@@ -90,12 +91,11 @@ export class JettonWallet implements Contract {
         via: Sender,
         value: bigint,
         jetton_amount: bigint,
-        responseAddress: Address,
-        customPayload: Cell,
+        responseAddress: Address | null
     ) {
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: JettonWallet.burnMessage(jetton_amount, responseAddress, customPayload),
+            body: JettonWallet.burnMessage(jetton_amount, responseAddress, beginCell().storeUint(Op.deposit, 32).endCell()),
             value: value,
         });
     }
@@ -109,7 +109,7 @@ export class JettonWallet implements Contract {
         return res.stack.readBigNumber();
     }
 
-    async getWalletData(provider: ContractProvider) {
+    async getWalletData(provider: ContractProvider): Promise<any> {
         let state = await provider.getState();
         if (state.state.type !== 'active') {
             console.log("Not active");

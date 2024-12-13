@@ -4,11 +4,15 @@ const int op::unstake = "unstake"c;
 const int op::execute_withdraw = "execute_withdraw"c;
 const int op::profit = "profit"c;
 const int op::emergency_withdrawal = "emergency withdrawal"c;
+const int op::request_mint_tJetton = "request_mint_tJetton"c;
 const int op::open = "open"c;
+const int op::mint = "mint"c;
 const op::upgrade_oracle = "upgrade_oracle"c;
 const op::upgrade_wallet_code = "upgrade_wallet_code"c;
-const op::upgrade_jetton_address =  "upgrade_jetton_address"c;
-const op::set_ctUSD_config =  "set_ctUSD_config"c;
+const op::update_sJetton_config = "update_sJetton_config"c;
+const op::update_cJetton_config =  "update_cJetton_config"c;
+const op::update_ctUSD_supply =  "update_ctUSD_supply"c;
+const op::update_deposit_fee =  "update_deposit_fee"c;
 const op::reimburse =  "reimburse"c;
 const int op::call_to = "call_to"c;
 const op::upgrade_data = "upgrade_data"c;
@@ -18,7 +22,6 @@ const op::set_data = "set_data"c;
 const int op::request_stake = "request_stake"c;
 const int op::request_convert = "request_convert"c;
 const int op::repay = "repay"c;
-const int op::mint_ctUSD = "mint_ctUSD"c;
 const int op::liquidation = "liquidation"c;
 const int op::request_liquidation = "request_liquidation"c;
 const int op::liquidate_notification = "liquidate_notification"c;
@@ -26,20 +29,24 @@ const int op::liquidation_finished = "liquidation_finished"c;
 const int op::liquidation_fail = "liquidation_fail"c;
 const int op::forced_liquidation = "forced_liquidation"c;
 const int op::forced_liquidation_notification = "forced_liquidation_notification"c;
+
 const op::claim = "claim"c;
 const op::claim_notification = "claim_notification"c;
 {- ======== Jetton OPCODES =========== -}
-const op::mint = "mint"c;
 const op::set_data_for_wallet = "set_data_for_wallet"c;
 
 {- ======== Jetton-Wallet OPCODES =========== -}
+const op::transfer = 0xf8a7ea5;
 const op::internal_transfer = 0x178d4519;
 const op::excesses = 0xd53276db;
 const op::burn_notification = 0x7bdd97de;
+const op::transfer_notification = 0x7362d09c;
 
 {- ======== Common OPCODES =========== -}
 const int op::borrow = "borrow"c;
 const int op::borrow_notification = "borrow_notification"c;
+const int op::repay_notification = "repay_notification"c;
+
 const op::request_borrow = "request_borrow"c;
 const int op::request_withdraw = "request_withdraw"c;
 const int op::request_mint_cton = "request_mint_cton"c;

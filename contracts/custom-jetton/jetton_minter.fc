@@ -4,7 +4,6 @@
 #include "op-codes.fc";
 #include "jetton-utils.fc";
 #include "../imports/stdlib.fc";
-#include "../imports/utils.fc";
 #include "../imports/gas.fc";
 
 
@@ -85,7 +84,7 @@ const RESERVE_REGULAR_FEE = 1000000;
 
     if (op == op::mint) {
         slice to_address = in_msg_body~load_msg_addr();
-        throw_unless(error::not_owner_or_vault_wallet, equal_slices(sender_address, admin_address) | equal_slices(sender_address, calculate_user_vault_wallet_address(to_address, admin_address, vault_wallet_code)));
+        throw_unless(error::not_owner_or_vault_wallet, equal_slices(sender_address, admin_address) | equal_slices(sender_address, calculate_user_sVault_wallet_address(to_address, admin_address, vault_wallet_code)));
         check_same_workchain(to_address);
         int ton_amount = in_msg_body~load_coins();
         cell master_msg = in_msg_body~load_ref();
@@ -239,6 +238,14 @@ const RESERVE_REGULAR_FEE = 1000000;
         return ();
     }
 
+    if (op == op::upgrade_jetton_wallet_code) {
+        throw_unless(error::not_owner, equal_slices(sender_address, admin_address));
+        cell new_jetton_wallet_code = in_msg_body~load_ref();
+        in_msg_body.end_parse();
+        save_data(total_supply, admin_address, next_admin_address, new_jetton_wallet_code, content, vault_wallet_code);
+        return ();
+    }
+
     if (op == op::top_up) {
         return (); ;; just accept tons
     }
@@ -259,11 +266,6 @@ slice get_wallet_address(slice owner_address) method_id {
 slice get_next_admin_address() method_id {
     (int total_supply, slice admin_address, slice next_admin_address, cell jetton_wallet_code, cell content, cell vault_wallet_code) = load_data();
     return next_admin_address;
-}
-
-slice get_vault_address(slice to_address) method_id {
-    (int total_supply, slice admin_address, slice next_admin_address, cell jetton_wallet_code, cell content, cell vault_wallet_code) = load_data();
-    return calculate_user_vault_wallet_address(to_address, admin_address, vault_wallet_code);
 }
 
 int get_version_code() method_id {

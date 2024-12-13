@@ -1,6 +1,5 @@
 import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano } from '@ton/core';
 import { Op } from './op-code';
-import { compile } from '@ton/blueprint';
 export function contentToCell(type: bigint, uri: string) {
     return beginCell()
         .storeUint(type, 8)
@@ -55,7 +54,7 @@ export class JettonMinter implements Contract {
         fee: bigint,
         forward_ton_amount: bigint,
         from_address: Address,
-        response_address: Address,
+        response_address: Address | null,
         to_amount: bigint,
     ) {
         const forwardPayload = beginCell()
@@ -64,7 +63,7 @@ export class JettonMinter implements Contract {
             .storeCoins(to_amount)
             .storeAddress(from_address)
             .storeAddress(response_address)
-            .storeCoins(forward_ton_amount)
+            .storeCoins(toNano("0.01"))
             .storeBit(-1)
             .endCell();
 
@@ -74,10 +73,10 @@ export class JettonMinter implements Contract {
                 .storeUint(Op.mint, 32)
                 .storeUint(0, 64)
                 .storeAddress(from_address)
-                .storeCoins(toNano("0.1"))
+                .storeCoins(forward_ton_amount)
                 .storeRef(forwardPayload)
                 .endCell(),
-            value: fee,
+            value: fee + forward_ton_amount,
         });
     }
 
