@@ -13,15 +13,6 @@ int math::pow(int x, int e) {
     return p;
 }
 
-int forward_fee_of(cell msg) impure inline {
-    slice cs = msg.begin_parse();
-    ;; https://github.com/ton-blockchain/ton/blob/140320b0dbe0bdd9fd954b6633a3677acc75a8e6/crypto/vm/tonops.cpp#L1278
-    var (c_cells, c_bits, _) = msg.compute_data_size((1 << 63) - 1);
-    int cs_bits = cs.slice_bits();
-    int forward_fee = get_forward_fee(MY_WORKCHAIN, c_bits - cs_bits, c_cells - 1);
-    return forward_fee;
-}
-
 cell pack_sVault_wallet_data(slice owner_address, slice vault_address) inline {
     return  begin_cell()
                 .store_bool(-1)
@@ -63,19 +54,7 @@ builder store_body(builder b, builder body) inline {
     : b.store_maybe_ref(body.end_cell());
 }
 
-;; 6 + 267 + 124 + 1 + 4 + 4 + 64 + 32 + 2 + 5 + 1 + 513
 cell build_msg(int bounceable?, slice dst, builder state_init, builder body, int coins) inline_ref {
-    ;; extra_currencies$_ dict:(HashmapE 32 (VarUInteger 32)) 
-    ;;   = ExtraCurrencyCollection;
-    ;; currencies$_ grams:Grams other:ExtraCurrencyCollection 
-    ;;   = CurrencyCollection;
-    ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
-    ;;   src:MsgAddress dest:MsgAddressInt
-    ;;   value:CurrencyCollection ihr_fee:Grams fwd_fee:Grams
-    ;;   created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;
-    ;; message$_ {X:Type} info:CommonMsgInfoRelaxed
-    ;;   init:(Maybe (Either StateInit ^StateInit))
-    ;;   body:(Either X ^X) = MessageRelaxed X;
     cell msg = begin_cell()
     .store_uint(bounceable? ? 0x18 : 0x10, 6) ;; 011000 or 010000
     .store_slice(dst)

@@ -14,7 +14,6 @@ const op::claim_admin = "claim_admin"c;
 const op::call_to = "call_to"c;
 const op::change_content = "change_content"c;
 const op::upgrade_jetton_code = "upgrade_jetton_code"c;
-const op::upgrade_jetton_wallet_code = "upgrade_jetton_wallet_code"c;
 const op::upgrade = "upgrade"c;
 const op::upgrade_wallet_code = "upgrade_wallet_code"c;
 

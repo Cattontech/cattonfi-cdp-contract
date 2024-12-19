@@ -9,7 +9,6 @@
 
 const RESERVE_REGULAR_FEE = 1000000;
 
-;; storage#_ total_supply:Coins admin_address:MsgAddress next_admin_address:MsgAddress jetton_wallet_code:^Cell content:^Cell = Storage;
 (int, slice, slice, cell, cell, cell) load_data() inline {
     slice ds = get_data().begin_parse();
     var data = (
@@ -238,14 +237,6 @@ const RESERVE_REGULAR_FEE = 1000000;
         return ();
     }
 
-    if (op == op::upgrade_jetton_wallet_code) {
-        throw_unless(error::not_owner, equal_slices(sender_address, admin_address));
-        cell new_jetton_wallet_code = in_msg_body~load_ref();
-        in_msg_body.end_parse();
-        save_data(total_supply, admin_address, next_admin_address, new_jetton_wallet_code, content, vault_wallet_code);
-        return ();
-    }
-
     if (op == op::top_up) {
         return (); ;; just accept tons
     }
@@ -266,8 +257,4 @@ slice get_wallet_address(slice owner_address) method_id {
 slice get_next_admin_address() method_id {
     (int total_supply, slice admin_address, slice next_admin_address, cell jetton_wallet_code, cell content, cell vault_wallet_code) = load_data();
     return next_admin_address;
-}
-
-int get_version_code() method_id {
-    return 1;
 }

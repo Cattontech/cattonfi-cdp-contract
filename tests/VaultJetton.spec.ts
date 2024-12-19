@@ -34,7 +34,6 @@ describe('VaultJetton', () => {
     let vaultJetton: SandboxContract<VaultJetton>;
     let sJettonMinter: SandboxContract<JettonMinter>;
     let tJettonMinter: SandboxContract<JettonMinter>;
-    let gasFee: FeeInfo
 
     let config: VaultJettonConfig = {
         is_open: 0n,
@@ -127,12 +126,6 @@ describe('VaultJetton', () => {
         expect(sendCallTo.transactions).toHaveTransaction({ from: admin.address, to: vaultJetton.address, success: true });
         expect(sendCallTo.transactions).toHaveTransaction({ from: vaultJetton.address, to: tJettonMinter.address, success: true });
 
-        gasFee = await vaultJetton.getEstFee();
-        // console.log("deposit_sJetton_fee", fromNano(gasFee.deposit_sJetton_fee));
-        // console.log("unstake_tJetton_fee", fromNano(gasFee.unstake_tJetton_fee));
-        // console.log("deposit_tJetton_fee", fromNano(gasFee.deposit_tJetton_fee));
-        // console.log("withdraw_sJetton_fee", fromNano(gasFee.withdraw_sJetton_fee));
-
     });
 
     it('deploy success and get vault info', async () => {
@@ -179,7 +172,7 @@ describe('VaultJetton', () => {
         expect(sJettonBalancePlayer).toEqual(toNano("1000"));
         // send action deposit
 
-        const dataDepositJetton = vaultJetton.dataDepositJetton(toNano("0.1"), gasFee.deposit_sJetton_fee, toNano("500"));
+        const dataDepositJetton = vaultJetton.dataDepositJetton(toNano("0.1"), toNano("0.1"), toNano("500"));
         palyer = blockchain.openContract(palyer);
         const sendDepositJetton = await sJettonWalletPlayer.sendTransfer(palyer.getSender(), dataDepositJetton.gasFee, dataDepositJetton.forwardFee, dataDepositJetton.receivedAddress, dataDepositJetton.responseAddress, dataDepositJetton.amount, dataDepositJetton.forwardPayload);
         printTransactionFees(sendDepositJetton.transactions);
@@ -198,7 +191,7 @@ describe('VaultJetton', () => {
 
     it('Player1 unstake tJetton', async () => {
         await playerDeposit(player1);
-        const sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), gasFee.unstake_tJetton_fee, toNano(500));
+        const sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), toNano("0.1"), toNano(500));
         printTransactionFees(sendUnstake.transactions);
         const vaultWalletPlayer1 = blockchain.openContract(VaultJettonWallet.createFromAddress(await vaultJetton.getWalletAddressOf(player1.address)));
         const walletInfo = await vaultWalletPlayer1.getWallettData();
@@ -220,24 +213,24 @@ describe('VaultJetton', () => {
 
     it('Player2 not deposit and unstake tJetton fail, player1 unstake fail', async () => {
         await playerDeposit(player1);
-        let sendUnstake = await vaultJetton.sendUnstake(player2.getSender(), gasFee.unstake_tJetton_fee, toNano(0));
+        let sendUnstake = await vaultJetton.sendUnstake(player2.getSender(), toNano("0.1"), toNano(0));
         printTransactionFees(sendUnstake.transactions);
         expect(sendUnstake.transactions).toHaveTransaction({ from: player2.address, to: vaultJetton.address, success: false, exitCode: 4007 });
 
-        sendUnstake = await vaultJetton.sendUnstake(player2.getSender(), gasFee.unstake_tJetton_fee, toNano(1));
+        sendUnstake = await vaultJetton.sendUnstake(player2.getSender(), toNano("0.1"), toNano(1));
         printTransactionFees(sendUnstake.transactions);
         expect(sendUnstake.transactions).toHaveTransaction({ from: player2.address, to: vaultJetton.address, success: true });
         const vaultWalletPlayer2 = blockchain.openContract(VaultJettonWallet.createFromAddress(await vaultJetton.getWalletAddressOf(player2.address)));
         expect(sendUnstake.transactions).toHaveTransaction({ from: vaultJetton.address, to: vaultWalletPlayer2.address, deploy: false });
 
         const vaultWalletPlayer1 = blockchain.openContract(VaultJettonWallet.createFromAddress(await vaultJetton.getWalletAddressOf(player1.address)));
-        sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), gasFee.unstake_tJetton_fee, toNano(501));
+        sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), toNano("0.1"), toNano(501));
         printTransactionFees(sendUnstake.transactions);
         expect(sendUnstake.transactions).toHaveTransaction({ from: player1.address, to: vaultJetton.address, exitCode: 5 });
 
         await playerDeposit(player3);
 
-        sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), gasFee.unstake_tJetton_fee, toNano(501));
+        sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), toNano("0.1"), toNano(501));
         printTransactionFees(sendUnstake.transactions);
         expect(sendUnstake.transactions).toHaveTransaction({ from: vaultJetton.address, to: vaultWalletPlayer1.address, exitCode: 56 });
 
@@ -252,14 +245,14 @@ describe('VaultJetton', () => {
         await playerDeposit(player3);
 
         const vaultWalletPlayer1 = blockchain.openContract(VaultJettonWallet.createFromAddress(await vaultJetton.getWalletAddressOf(player1.address)));
-        let sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), gasFee.unstake_tJetton_fee, toNano(500));
+        let sendUnstake = await vaultJetton.sendUnstake(player1.getSender(), toNano("0.1"), toNano(500));
         printTransactionFees(sendUnstake.transactions);
 
         const tJettonWalletPlayer1 = await getJettonWallet(blockchain, tJettonMinter.address, player1.address);
         let tJettonBalancePlayer1 = await tJettonWalletPlayer1.getJettonBalance();
         expect(tJettonBalancePlayer1).toEqual(toNano("500"));
 
-        const sendDeposit = await tJettonWalletPlayer1.sendBurn(player1.getSender(), gasFee.deposit_tJetton_fee + toNano("0.05"), toNano("500"), player1.getSender().address);
+        const sendDeposit = await tJettonWalletPlayer1.sendBurn(player1.getSender(), toNano("0.1") + toNano("0.05"), toNano("500"), player1.getSender().address);
         printTransactionFees(sendDeposit.transactions);
 
         await vaultJetton.getVaultData();
@@ -278,7 +271,7 @@ describe('VaultJetton', () => {
         await playerDeposit(player3);
 
         const vaultWalletPlayer1 = blockchain.openContract(VaultJettonWallet.createFromAddress(await vaultJetton.getWalletAddressOf(player1.address)));
-        let sendWithdraw = await vaultJetton.sendWithdraw(player1.getSender(), gasFee.withdraw_sJetton_fee, toNano(500));
+        let sendWithdraw = await vaultJetton.sendWithdraw(player1.getSender(), toNano("0.1"), toNano(500));
         printTransactionFees(sendWithdraw.transactions)
 
         await vaultJetton.getVaultData();

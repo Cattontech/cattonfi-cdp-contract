@@ -1,6 +1,5 @@
 #pragma version >=0.4.4;
 #include "../imports/stdlib.fc";
-#include "gas.fc";
 #include "../imports/errors.fc";
 #include "sVault-storage.fc";
 #include "sVault-helper.fc";
@@ -131,39 +130,30 @@ int calculate_stJetton_ratio() inline {
 () jetton_transfer_notification(int msg_value, slice in_msg_body, slice sender_address) impure inline {
     int transfer_amount = in_msg_body~load_coins();
     slice from_address = in_msg_body~load_msg_addr();
-    try {
-        check_same_workchain(from_address);
-        slice payload = in_msg_body~load_maybe_ref().begin_parse();
-        in_msg_body.end_parse();
-        int internal_op = payload~load_op();
+    check_same_workchain(from_address);
+    slice payload = in_msg_body~load_maybe_ref().begin_parse();
+    in_msg_body.end_parse();
+    int internal_op = payload~load_op();
 
-        if(equal_slices(sJetton::wallet_address, sender_address)){
-            payload.end_parse();
-            throw_unless(error::insufficient_fee, msg_value >= deposit_sJetton_fee());
-            if (internal_op == op::deposit) {
-                deposit_sJetton(msg_value, transfer_amount, from_address);
-                return ();
-            } elseif (internal_op == op::profit) {
-                sJetton::total_deposited += transfer_amount;
-                save_data();
-                return ();
-            } elseif(internal_op == op::reimburse) {
-                ;; The assets obtained by the controller after full liquidation will be returned when the user converts c to sJtton or tJetton.
-                int collateral_amount = cal_mint_tJetton_amount(transfer_amount, sJetton::total_deposited, tJetton::total_supply + tJetton::total_staked);
-                sJetton::total_deposited += transfer_amount;
-                tJetton::total_staked += collateral_amount;
-                save_data();
-                return ();
-            }
-        }
-    } catch (_,_) {
-        if(equal_slices(sJetton::wallet_address, sender_address)){
+    if(equal_slices(sJetton::wallet_address, sender_address)){
+        payload.end_parse();
+        if (internal_op == op::deposit) {
+            deposit_sJetton(msg_value, transfer_amount, from_address);
+            return ();
+        } elseif (internal_op == op::profit) {
             sJetton::total_deposited += transfer_amount;
             save_data();
+            return ();
+        } elseif(internal_op == op::reimburse) {
+            ;; The assets obtained by the controller after full liquidation will be returned when the user converts c to sJtton or tJetton.
+            int collateral_amount = cal_mint_tJetton_amount(transfer_amount, sJetton::total_deposited, tJetton::total_supply + tJetton::total_staked);
+            sJetton::total_deposited += transfer_amount;
+            tJetton::total_staked += collateral_amount;
+            save_data();
+            return ();
         }
-        send_msg_excess_with_remainning_value(from_address);
-        return ();
     }
+    return ();
 }
 
 () mutative_functions(int my_balance, int msg_value, slice in_msg_body, slice sender_address) impure inline {
@@ -195,7 +185,6 @@ int calculate_stJetton_ratio() inline {
         save_data();
         return();
     } elseif (op == op::unstake){
-        throw_unless(error::insufficient_fee, msg_value >= unstake_tJetton_fee());
         int unstake_amount = in_msg_body~load_coins();
         in_msg_body.end_parse();
 
@@ -214,7 +203,6 @@ int calculate_stJetton_ratio() inline {
         save_data();
         return();
     } elseif (op == op::request_withdraw) {
-        throw_unless(error::insufficient_fee, msg_value >= withdraw_sJetton_fee());
         int withdraw_amount = in_msg_body~load_coins();
         throw_unless(error::invalid_amount, withdraw_amount > 0);
 
@@ -239,7 +227,6 @@ int calculate_stJetton_ratio() inline {
             payload.end_parse();
             check_same_workchain(response_address);
             if(equal_slices(tJetton::minter_address, sender_address)){
-                throw_unless(error::insufficient_fee, msg_value >= deposit_tJetton_fee());
                 builder body_request = begin_cell()
                                         .store_op(op::request_stake)
                                         .store_query_id(0)
@@ -347,8 +334,4 @@ int calculate_stJetton_ratio() inline {
 slice get_wallet_address(slice owner_address) method_id {
     load_data();
     return calculate_user_sVault_wallet_address(owner_address, my_address(), sVault::wallet_code);
-}
-
-(int, int, int, int) get_est_fee() method_id {
-    return (deposit_sJetton_fee(), unstake_tJetton_fee(), deposit_tJetton_fee(), withdraw_sJetton_fee());
 }

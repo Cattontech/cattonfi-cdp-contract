@@ -3,11 +3,14 @@
 #include "../imports/errors.fc";
 #include "op-codes.fc";
 #include "utils.fc";
-#include "gas.fc";
 #include "sVault-wallet-storage.fc";
 
 int cal_reward(int acc_reward_per_share) inline {
     return tJetton::balance * acc_reward_per_share / ACC_REWARD_PRECISION - tJetton::reward_debt;
+}
+
+int cal_keep_balance(int my_balance) inline {
+    return my_balance >= VAULT_JETTON_MIN_STORAGE_FEE ? 0 : (VAULT_JETTON_MIN_STORAGE_FEE - my_balance);
 }
 
 () on_bounce(slice in_msg_body) impure inline {
@@ -91,7 +94,7 @@ int cal_reward(int acc_reward_per_share) inline {
             tJetton::balance -= mint_amount;
             tJetton::reward_debt = tJetton::balance * acc_reward_per_share / ACC_REWARD_PRECISION;
 
-            send_mint_message(tJetton_address, data::owner_address, fee_min_jetton(), mint_amount, 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            send_mint_message(tJetton_address, data::owner_address, MINT_JETTON_FEE, mint_amount, 0, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
             save_data();
             return ();
         } elseif (op == op::request_withdraw){
